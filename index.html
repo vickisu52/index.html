@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notion Running Tracker Widget</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            notion: {
+              lightBg: '#ffffff',
+              lightCard: '#f7f7f5',
+              lightBorder: '#e9e9e7',
+              lightText: '#37352f',
+              darkBg: '#191919',
+              darkCard: '#202020',
+              darkBorder: '#2f2f2f',
+              darkText: '#ffffff'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+      transition: background-color 0.2s, color 0.2s;
+    }
+    .progress-ring__circle {
+      transition: stroke-dashoffset 0.4s ease-in-out;
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+    }
+    /* Custom Scrollbar for Notion look */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(156, 163, 175, 0.5); }
+  </style>
+</head>
+<body class="bg-notion-lightBg dark:bg-notion-darkBg text-notion-lightText dark:text-notion-darkText min-h-screen p-3 sm:p-5">
+
+  <div class="max-w-4xl mx-auto space-y-4">
+    
+    <!-- 頂部工具列 (Notion 極簡風) -->
+    <header class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-notion-lightBorder dark:border-notion-darkBorder">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">🏃</span>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold tracking-tight flex items-center gap-2">
+            跑步習慣追蹤器
+            <span id="streakPill" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-orange-500/15 text-orange-500 border border-orange-500/20">
+              🔥 連續 0 天
+            </span>
+          </h1>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5">
+        <button onclick="toggleTheme()" id="themeBtn" title="切換淺色/深色模式"
+          class="px-2.5 py-1.5 text-xs font-medium rounded-md bg-notion-lightCard dark:bg-notion-darkCard border border-notion-lightBorder dark:border-notion-darkBorder hover:opacity-80 transition">
+          🌓 主題
+        </button>
+        <button onclick="loadDemoData()" title="載入近半年範例數據"
+          class="px-2.5 py-1.5 text-xs font-medium rounded-md bg-notion-lightCard dark:bg-notion-darkCard border border-notion-lightBorder dark:border-notion-darkBorder hover:opacity-80 transition">
+          ✨ 範例
+        </button>
+        <button onclick="exportData()" title="匯出 JSON 備份"
+          class="px-2.5 py-1.5 text-xs font-medium rounded-md bg-notion-lightCard dark:bg-notion-darkCard border border-notion-lightBorder dark:border-notion-darkBorder hover:opacity-80 transition">
+          📤 匯出
+        </button>
+        <button onclick="clearAllData()" title="清空資料"
+          class="px-2.5 py-1.5 text-xs font-medium rounded-md text-rose-500 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 transition">
+          🗑️
+        </button>
+      </div>
+    </header>
+
+    <!-- 第一排：快速打卡與今日目標 + 7日連續紀錄圖 -->
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+      
+      <!-- 左側：今日目標環 & 快速記錄 (5欄) -->
+      <div class="md:col-span-5 bg-notion-lightCard dark:bg-notion-darkCard border border-notion-lightBorder dark:border-notion-darkBorder rounded-xl p-4 flex flex-col justify-between space-y-4">
+        
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="text-xs text-gray-500 dark:text-gray-400 font-medium block">今日進度</span>
+            <h2 id="todayDateText" class="text-sm font-bold mt-0.5">--</h2>
+          </div>
+          <!-- 每日目標設定 -->
+          <div class="flex items-center gap-1 bg-white dark:bg-notion-darkBg px-2 py-1 rounded-lg border border-notion-lightBorder dark:border-notion-darkBorder">
+            <span class="text-[11px] text-gray-400">目標</span>
+            <input type="number" id="dailyGoalInput" step="0.5" min="0.5" max="100" onchange="updateDailyGoal()"
+              class="w-12 text-center text-xs font-bold bg-transparent focus:outline-none text-emerald-500" value="5.0">
+            <span class="text-[11px] text-gray-400">km</span>
+          </div>
+        </div>
+
+        <!-- 緊湊型進度環 + 今日數據 -->
+        <div class="flex items-center gap-4 py-1">
+          <div class="relative flex items-center justify-center shrink-0">
+            <svg class="w-24 h-24">
+              <circle class="text-gray-200 dark:text-neutral-800" stroke-width="8" stroke="currentColor" fill="transparent" r="40" cx="48" cy="48"/>
+              <circle id="progressRing" class="text-emerald-500 progress-ring__circle" stroke-width="8" stroke-linecap="round" stroke="currentColor" fill="transparent" r="40" cx="48" cy="48" stroke-dasharray="251.2" stroke-dashoffset="251.2"/>
+            </svg>
+            <div class="absolute text-center">
+              <span id="todayPercent" class="text-sm font-extrabold text-emerald-500">0%</span>
+            </div>
+          </div>
+
+          <div class="space-y-1 flex-1">
+            <div class="flex items-baseline gap-1">
+              <span id="todayDistText" class="text-2xl font-extrabold">0.0</span>
+              <span class="text-xs text-gray-400">/ <span id="goalTargetText">5.0</span> km</span>
+            </div>
+            <p id="todayStatusBadge" class="text-xs text-gray-500 dark:text-gray-400">今天還沒起跑，加油！</p>
+            <div class="pt-1 flex gap-3 text-xs text-gray-500 dark:text-gray-400">
+              <span>7日累積: <strong id="weekTotalDist" class="text-notion-lightText dark:text-white">0.0</strong>k</span>
+              <span>配速: <strong id="weekAvgPace" class="text-notion-lightText dark:text-white">--</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 內嵌快速打卡表單 -->
+        <form onsubmit="handleQuickLog(event)" class="pt-3 border-t border-notion-lightBorder dark:border-notion-darkBorder space-y-2">
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <label class="text-[10px] text-gray-400 block mb-0.5">日期</label>
+              <input type="date" id="logDate" required
+                class="w-full px-2 py-1.5 text-xs rounded-md bg-white dark:bg-notion-darkBg border border-notion-lightBorder dark:border-notion-darkBorder focus:outline-none focus:border-emerald-500">
+            </div>
+            <div>
+              <label class="text-[10px] text-gray-400 block mb-0.5">距離 (km)</label>
+              <input type="number" id="logDist" step="0.1" min="0" max="200" placeholder="5.0" required
+                class="w-full px-2 py-1.5 text-xs rounded-md bg-white dark:bg-notion-darkBg border border-notion-lightBorder dark:border-notion-darkBorder focus:outline-none focus:border-emerald-500">
+            </div>
+            <div>
+              <label class="text-[10px] text-gray-400 block mb-0.5">時間 (分)</label>
+              <input type="number" id="logDur" step="1" min="1" max="1440" placeholder="30" required
+                class="w-full px-2 py-1.5 text-xs rounded-md bg-white dark:bg-notion-darkBg border border-notion-lightBorder dark:border-notion-darkBorder focus:outline-none focus:border-emerald-500">
+            </div>
+          </div>
+          <button type="submit"
+            class="w-full py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-xs rounded-md transition shadow-sm">
+            ＋ 儲存打卡紀錄
+          </button>
+        </form>
+      </div>
+
+      <!-- 右側：每週連續記錄圖表 & 7日打卡列 (7欄) -->
+      <div class="md:col-span-7 bg-notion-lightCard dark:bg-notion-darkCard border border-notion-lightBorder dark:border-notion-darkBorder rounded-xl p-4 flex flex-col justify-between">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <h2 class="text-sm font-bold">近 7 日連續紀錄</h2>
+            <p class="text-[11px] text-gray-400">綠柱代表達標，橘色虛線為每日目標</p>
+          </div>
+          <div class="text-right">
+            <span class="text-xs font-semibold text-emerald-500" id="weeklyHitSummary">達標 0 / 7 天</span>
+          </div>
+        </div>
+
+        <!-- Chart.js 容器 -->
+        <div class="h-36 w-full my-1">
+          <canvas id="weeklyChart"></canvas>
+        </div>
+
+        <!-- 7日打卡徽章列 -->
+        <div id="sevenDayStrip" class="grid grid-cols-7 gap-1.5 pt-3 border-t border-notion-lightBorder dark:border-notion-darkBorder">
+          <!-- JS 生成 -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 第二排：GitHub 風格跑量熱力圖 (支援月視角 & 近半年貢獻圖切換) -->
+    <div class="bg-notion-lightCard dark:bg-notion-darkCard border border-notion-lightBorder dark:border-notion-darkBorder rounded-xl p-4 space-y-3">
+      
+      <!-- 熱力圖控制列 -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-bold flex items-center gap-1.5">
+            <span>🟩</span> 跑量貢獻熱力圖
+          </h2>
+          <!-- 切換視角：當月日曆格 vs 近20週 GitHub 牆 -->
+          <div class="inline-flex rounded-lg p-0.5 bg-white dark:bg-notion-darkBg border border-notion-lightBorder dark:border-notion-darkBorder text-xs">
+            <button onclick="setHeatmapMode('month')" id="modeMonthBtn" class="px-2.5 py-1 rounded-md font-medium transition">
+              當月日曆
+            </button>
+            <button onclick="setHeatmapMode('github')" id="modeGithubBtn" class="px-2.5 py-1 rounded-md font-medium transition">
+              GitHub 連續牆 (20週)
+            </button>
+          </div>
+        </div>
+
+        <!-- 月份切換器 (僅在當月日曆模式顯示) -->
+        <div id="monthNavControls" class="flex items-center gap-2 text-xs">
+          <button onclick="changeMonth(-1)" class="px-2 py-1 rounded bg-white dark:bg-notion-darkBg border border-notion-lightBorder dark:border-notion-darkBorder hover:opacity-80">◀</button>
+          <span id="currentMonthLabel" class="font-bold min-w-[90px] text-center">2026年 10月</span>
+          <button onclick="changeMonth(1)" class="px-2 py-1 rounded bg-white dark:bg-notion-darkBg border border-notion-lightBorder dark:border-notion-darkBorder hover:opacity-80">▶</button>
+        </div>
+      </div>
+
+      <!-- 當月統計摘要條 -->
+      <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400 bg-white/60 dark:bg-notion-darkBg/60 px-3 py-2 rounded-lg border border-notion-lightBorder dark:border-notion-darkBorder">
+        <div class="flex flex-wrap items-center gap-4">
+          <span>區間總跑量：<strong id="heatmapTotalDist" class="text-emerald-500 font-bold">0.0 km</strong></span>
+          <span>跑步天數：<strong id="heatmapActiveDays" class="text-notion-lightText dark:text-white">0 天</strong></span>
+          <span>達標天數：<strong id="heatmapGoalDays" class="text-orange-400">0 天</strong></span>
+        </div>
+        <!-- 圖例 (GitHub 5階綠) -->
+        <div class="flex items-center gap-1 text-[11px]">
+          <span>少</span>
+          <span class="w-3 h-3 rounded-[3px] bg-gray-200 dark:bg-neutral-800 inline-block" title="0 km"></span>
+          <span class="w-3 h-3 rounded-[3px] bg-emerald-900/60 dark:bg-emerald-950 border border-emerald-700/40 inline-block" title="> 0 km (未達標50%)"></span>
+          <span class="w-3 h-3 rounded-[3px] bg-emerald-700/80 dark:bg-emerald-800 inline-block" title="達標 50% ~ 99%"></span>
+          <span class="w-3 h-3 rounded-[3px] bg-emerald-500 inline-block" title="達成每日目標 (100%+)"></span>
+          <span class="w-3 h-3 rounded-[3px] bg-emerald-300 ring-1 ring-emerald-400 inline-block" title="超額完成 (150%+)"></span>
+          <span>多</span>
+        </div>
+      </div>
+
+      <!-- 熱力圖渲染區 -->
+      <div id="heatmapContainer" class="pt-1 overflow-x-auto">
+        <!-- 由 JS 動態渲染「月曆方格」或「GitHub 20週矩陣」 -->
+      </div>
+
+      <!-- 點擊熱力圖方塊後的快速檢視/編輯提示 -->
+      <div id="selectedCellInfo" class="text-xs text-gray-400 flex items-center justify-between pt-1">
+        <span>💡 點擊任一日期方格，可自動帶入左上方表單進行新增或修改。</span>
+        <span id="cellDetailText" class="font-medium text-emerald-400"></span>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    const STORAGE_KEY_LOGS = 'runners_pulse_logs_v1';
+    const STORAGE_KEY_GOAL = 'runners_pulse_goal_v1';
+    const STORAGE_KEY_THEME = 'runners_pulse_theme_v1';
+
+    let dailyGoal = parseFloat(localStorage.getItem(STORAGE_KEY_GOAL)) || 5.0;
+    let runLogs = JSON.parse(localStorage.getItem(STORAGE_KEY_LOGS)) || {};
+    let heatmapMode = 'month'; // 'month' 或 'github'
+    let currentMonthDate = new Date(); // 控制月曆模式的年月
+    let weeklyChart = null;
+
+    function getLocalDateStr(d = new Date()) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function formatPace(dist, dur) {
+      if (!dist || dist <= 0 || !dur || dur <= 0) return "--'--''";
+      const pace = dur / dist;
+      const mins = Math.floor(pace);
+      const secs = Math.round((pace - mins) * 60);
+      return `${mins}'${String(secs).padStart(2, '0')}''`;
+    }
+
+    // 根據距離與每日目標決定 GitHub 熱力圖等級 (0~4)
+    function getHeatLevel(dist) {
+      if (!dist || dist <= 0) return 0;
+      const ratio = dist / dailyGoal;
+      if (ratio < 0.5) return 1;
+      if (ratio < 1.0) return 2;
+      if (ratio < 1.5) return 3;
+      return 4;
+    }
+
+    function getHeatColorClass(level) {
+      switch (level) {
+        case 0: return 'bg-gray-200/80 dark:bg-neutral-800/90 text-gray-400 dark:text-neutral-600';
+        case 1: return 'bg-emerald-200 dark:bg-emerald-950/90 text-emerald-800 dark:text-emerald-300 border border-emerald-600/30';
+        case 2: return 'bg-emerald-400/80 dark:bg-emerald-700/80 text-white';
+        case 3: return 'bg-emerald-500 dark:bg-emerald-500 text-slate-950 font-bold shadow-sm shadow-emerald-500/20';
+        case 4: return 'bg-emerald-300 dark:bg-emerald-300 text-slate-950 font-extrabold ring-1 ring-emerald-400';
+      }
+    }
+
+    function initApp() {
+      // 主題初始化
+      const savedTheme = localStorage.getItem(STORAGE_KEY_THEME) || 'dark';
+      if (savedTheme === 'light') {
+        document.documentElement.classList.remove('dark');
+      } else {
+        document.documentElement.classList.add('dark');
+      }
+
+      const todayStr = getLocalDateStr();
+      document.getElementById('logDate').value = todayStr;
+      document.getElementById('dailyGoalInput').value = dailyGoal;
+      document.getElementById('todayDateText').textContent = todayStr;
+
+      if (Object.keys(runLogs).length === 0) {
+        loadDemoData();
+      } else {
+        renderAll();
+      }
+    }
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      if (html.classList.contains('dark')) {
+        html.classList.remove('dark');
+        localStorage.setItem(STORAGE_KEY_THEME, 'light');
+      } else {
+        html.classList.add('dark');
+        localStorage.setItem(STORAGE_KEY_THEME, 'dark');
+      }
+      renderAll();
+    }
+
+    function updateDailyGoal() {
+      const val = parseFloat(document.getElementById('dailyGoalInput').value);
+      if (isNaN(val) || val <= 0) return;
+      dailyGoal = val;
+      localStorage.setItem(STORAGE_KEY_GOAL, dailyGoal);
+      renderAll();
+    }
+
+    function handleQuickLog(e) {
+      e.preventDefault();
+      const date = document.getElementById('logDate').value;
+      const dist = parseFloat(document.getElementById('logDist').value);
+      const dur = parseInt(document.getElementById('logDur').value, 10);
+
+      if (!date || isNaN(dist) || isNaN(dur)) return;
+
+      if (dist === 0) {
+        delete runLogs[date];
+      } else {
+        runLogs[date] = { distance: parseFloat(dist.toFixed(2)), duration: dur };
+      }
+
+      localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(runLogs));
+      document.getElementById('logDist').value = '';
+      document.getElementById('logDur').value = '';
+      renderAll();
+    }
+
+    function selectDateFromHeatmap(dateStr) {
+      document.getElementById('logDate').value = dateStr;
+      const existing = runLogs[dateStr];
+      if (existing) {
+        document.getElementById('logDist').value = existing.distance;
+        document.getElementById('logDur').value = existing.duration;
+        document.getElementById('cellDetailText').textContent = 
+          `📅 ${dateStr}：${existing.distance} km (${existing.duration} 分鐘，配速 ${formatPace(existing.distance, existing.duration)})`;
+      } else {
+        document.getElementById('logDist').value = '';
+        document.getElementById('logDur').value = '';
+        document.getElementById('cellDetailText').textContent = `📅 ${dateStr}：尚無紀錄，可於上方輸入距離打卡`;
+      }
+      document.getElementById('logDist').focus();
+    }
+
+    function calculateStreak() {
+      let streak = 0;
+      const today = new Date();
+      const todayStr = getLocalDateStr(today);
+      let checkDate = new Date(today);
+
+      if (!runLogs[todayStr] || runLogs[todayStr].distance < dailyGoal) {
+        checkDate.setDate(checkDate.getDate() - 1);
+      }
+
+      while (true) {
+        const dStr = getLocalDateStr(checkDate);
+        if (runLogs[dStr] && runLogs[dStr].distance >= dailyGoal) {
+          streak++;
+          checkDate.setDate(checkDate.getDate() - 1);
+        } else {
+          break;
+        }
+      }
+      return streak;
+    }
+
+    function setHeatmapMode(mode) {
+      heatmapMode = mode;
+      renderHeatmap();
+    }
+
+    function changeMonth(delta) {
+      currentMonthDate.setMonth(currentMonthDate.getMonth() + delta);
+      renderHeatmap();
+    }
+
+    function renderAll() {
+      const todayStr = getLocalDateStr();
+      const todayEntry = runLogs[todayStr] || { distance: 0, duration: 0 };
+
+      // 1. 連勝與今日圓環
+      const streak = calculateStreak();
+      document.getElementById('streakPill').textContent = `🔥 連續 ${streak} 天達標`;
+
+      const circumference = 2 * Math.PI * 40;
+      const pct = Math.min(100, Math.round((todayEntry.distance / dailyGoal) * 100));
+      document.getElementById('progressRing').style.strokeDashoffset = circumference - (pct / 100) * circumference;
+      document.getElementById('todayPercent').textContent = `${pct}%`;
+      document.getElementById('todayDistText').textContent = todayEntry.distance.toFixed(1);
+      document.getElementById('goalTargetText').textContent = dailyGoal.toFixed(1);
+
+      const statusEl = document.getElementById('todayStatusBadge');
+      if (todayEntry.distance >= dailyGoal) {
+        statusEl.textContent = '🎉 今日目標已達成！';
+        statusEl.className = 'text-xs font-semibold text-emerald-500';
+      } else if (todayEntry.distance > 0) {
+        statusEl.textContent = `距離達標還差 ${(dailyGoal - todayEntry.distance).toFixed(1)} km`;
+        statusEl.className = 'text-xs font-medium text-sky-400';
+      } else {
+        statusEl.textContent = '今天還沒起跑，立即打卡吧！';
+        statusEl.className = 'text-xs text-gray-400';
+      }
+
+      // 2. 近 7 日統計與圖表
+      renderWeeklySection();
+
+      // 3. 渲染熱力圖
+      renderHeatmap();
+    }
+
+    function renderWeeklySection() {
+      const days = [];
+      const today = new Date();
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        days.push(d);
+      }
+
+      const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+      const labels = [];
+      const dataDist = [];
+      const goalLine = [];
+      const colors = [];
+
+      let weekDist = 0;
+      let weekDur = 0;
+      let hitCount = 0;
+
+      const stripEl = document.getElementById('sevenDayStrip');
+      stripEl.innerHTML = '';
+
+      days.forEach((d, idx) => {
+        const dStr = getLocalDateStr(d);
+        const label = idx === 6 ? '今日' : `週${dayNames[d.getDay()]}`;
+        labels.push(label);
+
+        const entry = runLogs[dStr];
+        const dist = entry ? entry.distance : 0;
+        const dur = entry ? entry.duration : 0;
+        const isHit = dist >= dailyGoal;
+
+        weekDist += dist;
+        weekDur += dur;
+        if (isHit) hitCount++;
+
+        dataDist.push(dist);
+        goalLine.push(dailyGoal);
+        colors.push(isHit ? '#10b981' : (dist > 0 ? '#38bdf8' : 'rgba(156,163,175,0.2)'));
+
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.onclick = () => selectDateFromHeatmap(dStr);
+        item.className = `p-1.5 rounded-lg border text-center transition hover:scale-105 ${
+          isHit
+            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-500'
+            : dist > 0
+              ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+              : 'bg-white/40 dark:bg-notion-darkBg/40 border-notion-lightBorder dark:border-notion-darkBorder text-gray-400'
+        }`;
+        item.innerHTML = `
+          <div class="text-[10px] font-medium">${label}</div>
+          <div class="text-xs my-0.5">${isHit ? '🔥' : (dist > 0 ? '👟' : '·')}</div>
+          <div class="text-[10px] font-bold">${dist.toFixed(1)}k</div>
+        `;
+        stripEl.appendChild(item);
+      });
+
+      document.getElementById('weekTotalDist').textContent = weekDist.toFixed(1);
+      document.getElementById('weekAvgPace').textContent = formatPace(weekDist, weekDur);
+      document.getElementById('weeklyHitSummary').textContent = `達標 ${hitCount} / 7 天`;
+
+      const ctx = document.getElementById('weeklyChart').getContext('2d');
+      if (weeklyChart) weeklyChart.destroy();
+
+      const isDark = document.documentElement.classList.contains('dark');
+      const tickColor = isDark ? '#9ca3af' : '#6b7280';
+
+      weeklyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              type: 'line',
+              label: '每日目標',
+              data: goalLine,
+              borderColor: '#f97316',
+              borderWidth: 1.5,
+              borderDash: [4, 4],
+              pointRadius: 0,
+              order: 1
+            },
+            {
+              type: 'bar',
+              label: '距離 (km)',
+              data: dataDist,
+              backgroundColor: colors,
+              borderRadius: 6,
+              barThickness: 20,
+              order: 2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' },
+              ticks: { color: tickColor, font: { size: 10 } }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { color: tickColor, font: { size: 10 } }
+            }
+          }
+        }
+      });
+    }
+
+    // 渲染熱力圖 (支援「當月日曆格」與「GitHub 20週連續牆」)
+    function renderHeatmap() {
+      const container = document.getElementById('heatmapContainer');
+      const monthNav = document.getElementById('monthNavControls');
+      const btnMonth = document.getElementById('modeMonthBtn');
+      const btnGithub = document.getElementById('modeGithubBtn');
+
+      if (heatmapMode === 'month') {
+        monthNav.classList.remove('hidden');
+        btnMonth.className = 'px-2.5 py-1 rounded-md font-semibold bg-emerald-500 text-white transition';
+        btnGithub.className = 'px-2.5 py-1 rounded-md font-medium text-gray-500 dark:text-gray-400 transition';
+        renderMonthlyCalendarHeatmap(container);
+      } else {
+        monthNav.classList.add('hidden');
+        btnGithub.className = 'px-2.5 py-1 rounded-md font-semibold bg-emerald-500 text-white transition';
+        btnMonth.className = 'px-2.5 py-1 rounded-md font-medium text-gray-500 dark:text-gray-400 transition';
+        renderGithubWeeksHeatmap(container);
+      }
+    }
+
+    // 模式 A：當月日曆熱力圖 (一眼看清整月每天跑量與熱力等級)
+    function renderMonthlyCalendarHeatmap(container) {
+      const year = currentMonthDate.getFullYear();
+      const month = currentMonthDate.getMonth();
+      document.getElementById('currentMonthLabel').textContent = `${year}年 ${month + 1}月`;
+
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const startWeekday = firstDay.getDay(); // 0 (週日) ~ 6 (週六)
+      const daysInMonth = lastDay.getDate();
+
+      let totalDist = 0;
+      let activeDays = 0;
+      let goalDays = 0;
+
+      let html = `
+        <div class="grid grid-cols-7 gap-1.5 text-center text-[11px] font-medium text-gray-400 mb-1.5">
+          <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+        </div>
+        <div class="grid grid-cols-7 gap-1.5">
+      `;
+
+      // 補齊月初空白
+      for (let i = 0; i < startWeekday; i++) {
+        html += `<div class="h-12 rounded-lg bg-transparent"></div>`;
+      }
+
+      const todayStr = getLocalDateStr();
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateObj = new Date(year, month, d);
+        const dStr = getLocalDateStr(dateObj);
+        const entry = runLogs[dStr];
+        const dist = entry ? entry.distance : 0;
+        const level = getHeatLevel(dist);
+        const colorClass = getHeatColorClass(level);
+        const isToday = dStr === todayStr;
+
+        if (dist > 0) {
+          totalDist += dist;
+          activeDays++;
+          if (dist >= dailyGoal) goalDays++;
+        }
+
+        html += `
+          <button type="button" onclick="selectDateFromHeatmap('${dStr}')"
+            title="${dStr}: ${dist} km"
+            class="h-12 rounded-lg p-1.5 flex flex-col justify-between items-start transition hover:scale-[1.04] ${colorClass} ${isToday ? 'ring-2 ring-orange-400' : ''}">
+            <span class="text-[10px] leading-none opacity-80">${d}</span>
+            <span class="text-xs self-end leading-none">${dist > 0 ? dist.toFixed(1) + 'k' : ''}</span>
+          </button>
+        `;
+      }
+
+      html += `</div>`;
+      container.innerHTML = html;
+
+      document.getElementById('heatmapTotalDist').textContent = `${totalDist.toFixed(1)} km`;
+      document.getElementById('heatmapActiveDays').textContent = `${activeDays} 天`;
+      document.getElementById('heatmapGoalDays').textContent = `${goalDays} 天`;
+    }
+
+    // 模式 B：GitHub 貢獻牆風格 (近 20 週 = 140 天直列式矩陣)
+    function renderGithubWeeksHeatmap(container) {
+      const weeksCount = 20;
+      const today = new Date();
+      // 對齊到本週六為最後一格，往前推 20 週的週日
+      const endDay = new Date(today);
+      const startDay = new Date(today);
+      startDay.setDate(today.getDate() - (weeksCount * 7) + (6 - today.getDay()));
+
+      let totalDist = 0;
+      let activeDays = 0;
+      let goalDays = 0;
+      const todayStr = getLocalDateStr(today);
+
+      let html = `<div class="flex items-start gap-2 min-w-max py-1">`;
+      
+      // 左側星期標籤
+      html += `
+        <div class="grid grid-rows-7 gap-1.5 text-[10px] text-gray-400 pr-1 pt-5">
+          <div class="h-4 leading-4">日</div>
+          <div class="h-4 leading-4">一</div>
+          <div class="h-4 leading-4">二</div>
+          <div class="h-4 leading-4">三</div>
+          <div class="h-4 leading-4">四</div>
+          <div class="h-4 leading-4">五</div>
+          <div class="h-4 leading-4">六</div>
+        </div>
+      `;
+
+      // 每一週一欄
+      let cursor = new Date(startDay);
+      cursor.setDate(cursor.getDate() - cursor.getDay()); // 確保從週日開始
+
+      for (let w = 0; w < weeksCount; w++) {
+        // 顯示該週第一天的月份標籤
+        const weekFirstDay = new Date(cursor);
+        const showMonth = weekFirstDay.getDate() <= 7 || w === 0;
+        const monthText = showMonth ? `${weekFirstDay.getMonth() + 1}月` : '&nbsp;';
+
+        html += `<div class="flex flex-col gap-1.5">`;
+        html += `<div class="text-[10px] text-gray-400 h-3.5 leading-none">${monthText}</div>`;
+
+        for (let dow = 0; dow < 7; dow++) {
+          const dStr = getLocalDateStr(cursor);
+          const isFuture = cursor > today;
+          const entry = runLogs[dStr];
+          const dist = (!isFuture && entry) ? entry.distance : 0;
+          const level = getHeatLevel(dist);
+          const colorClass = isFuture ? 'opacity-20 bg-gray-200 dark:bg-neutral-800' : getHeatColorClass(level);
+          const isToday = dStr === todayStr;
+
+          if (!isFuture && dist > 0) {
+            totalDist += dist;
+            activeDays++;
+            if (dist >= dailyGoal) goalDays++;
+          }
+
+          html += `
+            <button type="button" ${isFuture ? 'disabled' : `onclick="selectDateFromHeatmap('${dStr}')"`}
+              title="${dStr}: ${dist} km"
+              class="w-4 h-4 rounded-[3px] transition hover:scale-125 ${colorClass} ${isToday ? 'ring-1 ring-orange-400' : ''}">
+            </button>
+          `;
+          cursor.setDate(cursor.getDate() + 1);
+        }
+
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+      container.innerHTML = html;
+
+      document.getElementById('heatmapTotalDist').textContent = `${totalDist.toFixed(1)} km`;
+      document.getElementById('heatmapActiveDays').textContent = `${activeDays} 天`;
+      document.getElementById('heatmapGoalDays').textContent = `${goalDays} 天`;
+    }
+
+    // 產生過去 90 天的擬真範例資料
+    function loadDemoData() {
+      const today = new Date();
+      runLogs = {};
+      for (let i = 90; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        const dStr = getLocalDateStr(d);
+
+        // 讓最近 5 天連續達標，其餘天數隨機產生跑步紀錄
+        if (i <= 4) {
+          const dist = parseFloat((dailyGoal + (Math.random() * 2.5)).toFixed(1));
+          runLogs[dStr] = { distance: dist, duration: Math.round(dist * 5.6) };
+        } else if (Math.random() > 0.35) {
+          const dist = parseFloat((2.5 + Math.random() * 6.5).toFixed(1));
+          runLogs[dStr] = { distance: dist, duration: Math.round(dist * 5.8) };
+        }
+      }
+      localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(runLogs));
+      renderAll();
+    }
+
+    function exportData() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ dailyGoal, runLogs }, null, 2));
+      const a = document.createElement('a');
+      a.setAttribute("href", dataStr);
+      a.setAttribute("download", `notion_running_backup_${getLocalDateStr()}.json`);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    function clearAllData() {
+      if (confirm('確定要清空所有跑步紀錄嗎？')) {
+        runLogs = {};
+        localStorage.removeItem(STORAGE_KEY_LOGS);
+        renderAll();
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', initApp);
+  </script>
+</body>
+</html>
